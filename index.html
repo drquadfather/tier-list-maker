@@ -1,0 +1,845 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
+<title>Tier List Maker</title>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/html2canvas/1.4.1/html2canvas.min.js"></script>
+<style>
+  *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+  :root {
+    --bg: #1a1a2e;
+    --surface: #16213e;
+    --surface2: #0f3460;
+    --text: #e0e0e0;
+    --text-muted: #888;
+    --border: #2a2a4a;
+    --accent: #e94560;
+    --accent-hover: #ff6b81;
+    --tile-size: 70px;
+  }
+
+  body {
+    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+    background: var(--bg);
+    color: var(--text);
+    min-height: 100vh;
+    padding: 12px;
+    -webkit-user-select: none;
+    user-select: none;
+    touch-action: manipulation;
+  }
+
+  h1 {
+    text-align: center;
+    font-size: 1.4rem;
+    margin-bottom: 12px;
+    font-weight: 600;
+  }
+
+  /* Tier rows */
+  .tier-container { width: 100%; max-width: 900px; margin: 0 auto; }
+
+  .tier-row {
+    display: flex;
+    align-items: stretch;
+    min-height: var(--tile-size);
+    border: 1px solid var(--border);
+    border-bottom: none;
+    background: var(--surface);
+  }
+  .tier-row:last-of-type { border-bottom: 1px solid var(--border); }
+
+  .tier-label {
+    min-width: 60px;
+    max-width: 140px;
+    padding: 4px 8px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-weight: 700;
+    font-size: 1.1rem;
+    color: #fff;
+    cursor: pointer;
+    position: relative;
+    flex-shrink: 0;
+    text-align: center;
+    word-break: break-word;
+    line-height: 1.2;
+  }
+
+  .tier-items {
+    flex: 1;
+    display: flex;
+    flex-wrap: wrap;
+    align-items: flex-start;
+    align-content: flex-start;
+    padding: 4px;
+    gap: 4px;
+    min-height: var(--tile-size);
+    transition: background 0.15s;
+  }
+  .tier-items.drag-over { background: rgba(233, 69, 96, 0.15); }
+
+  .tier-actions {
+    display: flex;
+    flex-direction: column;
+    justify-content: center;
+    gap: 2px;
+    padding: 2px 4px;
+    flex-shrink: 0;
+  }
+  .tier-actions button {
+    background: var(--surface2);
+    border: 1px solid var(--border);
+    color: var(--text-muted);
+    font-size: 0.7rem;
+    padding: 2px 6px;
+    border-radius: 3px;
+    cursor: pointer;
+    white-space: nowrap;
+  }
+  .tier-actions button:hover { color: var(--text); background: var(--border); }
+
+  /* Items */
+  .item {
+    height: var(--tile-size);
+    min-width: 40px;
+    border-radius: 4px;
+    overflow: hidden;
+    cursor: grab;
+    position: relative;
+    background: var(--surface2);
+    flex-shrink: 0;
+  }
+  .item:active { cursor: grabbing; }
+  .item img {
+    height: 100%;
+    width: auto;
+    display: block;
+    pointer-events: none;
+  }
+  .item .delete-item {
+    position: absolute;
+    top: 1px;
+    right: 1px;
+    width: 18px;
+    height: 18px;
+    background: rgba(0,0,0,0.7);
+    color: #fff;
+    border: none;
+    border-radius: 50%;
+    font-size: 11px;
+    line-height: 18px;
+    text-align: center;
+    cursor: pointer;
+    display: none;
+    padding: 0;
+  }
+  .item:hover .delete-item, .item:focus .delete-item { display: block; }
+
+  /* Ghost for dragging */
+  .drag-ghost {
+    position: fixed;
+    pointer-events: none;
+    z-index: 9999;
+    opacity: 0.85;
+    border-radius: 4px;
+    overflow: hidden;
+    box-shadow: 0 4px 16px rgba(0,0,0,0.4);
+  }
+  .drag-ghost img { height: var(--tile-size); width: auto; display: block; }
+
+  /* Unranked pool */
+  .pool-section {
+    max-width: 900px;
+    margin: 16px auto 0;
+  }
+  .pool-header {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    margin-bottom: 6px;
+    flex-wrap: wrap;
+  }
+  .pool-header span { font-size: 0.85rem; font-weight: 600; }
+
+  .pool {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 4px;
+    padding: 8px;
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    min-height: calc(var(--tile-size) + 16px);
+    transition: background 0.15s;
+  }
+  .pool.drag-over { background: rgba(233, 69, 96, 0.15); }
+
+  /* Upload area */
+  .upload-area {
+    max-width: 900px;
+    margin: 12px auto 0;
+    padding: 20px;
+    border: 2px dashed var(--border);
+    border-radius: 6px;
+    text-align: center;
+    cursor: pointer;
+    transition: border-color 0.2s;
+  }
+  .upload-area:hover, .upload-area.drag-active { border-color: var(--accent); }
+  .upload-area p { color: var(--text-muted); font-size: 0.85rem; }
+  .upload-area input { display: none; }
+
+  /* Add tier button */
+  .add-tier-section {
+    max-width: 900px;
+    margin: 8px auto 0;
+    display: flex;
+    gap: 6px;
+  }
+
+  /* Buttons */
+  .btn {
+    padding: 8px 14px;
+    border: none;
+    border-radius: 5px;
+    font-size: 0.8rem;
+    font-weight: 600;
+    cursor: pointer;
+    transition: background 0.15s;
+  }
+  .btn-primary { background: var(--accent); color: #fff; }
+  .btn-primary:hover { background: var(--accent-hover); }
+  .btn-secondary { background: var(--surface2); color: var(--text); border: 1px solid var(--border); }
+  .btn-secondary:hover { background: var(--border); }
+
+  /* Bottom actions */
+  .bottom-actions {
+    max-width: 900px;
+    margin: 14px auto 0;
+    display: flex;
+    gap: 8px;
+    flex-wrap: wrap;
+  }
+
+  /* Modal */
+  .modal-overlay {
+    position: fixed;
+    inset: 0;
+    background: rgba(0,0,0,0.6);
+    z-index: 1000;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    padding: 20px;
+  }
+  .modal-overlay.hidden { display: none; }
+  .modal {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    padding: 20px;
+    width: 100%;
+    max-width: 340px;
+  }
+  .modal h2 { font-size: 1rem; margin-bottom: 12px; }
+  .modal label { font-size: 0.8rem; color: var(--text-muted); display: block; margin-bottom: 4px; }
+  .modal input[type="text"] {
+    width: 100%;
+    padding: 8px;
+    border-radius: 5px;
+    border: 1px solid var(--border);
+    background: var(--bg);
+    color: var(--text);
+    font-size: 0.9rem;
+    margin-bottom: 10px;
+  }
+  .modal .color-options {
+    display: flex;
+    gap: 8px;
+    flex-wrap: wrap;
+    margin-bottom: 14px;
+  }
+  .modal .color-swatch {
+    width: 32px;
+    height: 32px;
+    border-radius: 50%;
+    cursor: pointer;
+    border: 3px solid transparent;
+    transition: border-color 0.15s;
+  }
+  .modal .color-swatch.selected { border-color: #fff; }
+  .modal .modal-buttons { display: flex; gap: 8px; justify-content: flex-end; }
+
+  /* Responsive */
+  @media (max-width: 500px) {
+    :root { --tile-size: 56px; }
+    .tier-label { min-width: 44px; max-width: 100px; font-size: 0.75rem; padding: 3px 5px; }
+    h1 { font-size: 1.1rem; }
+  }
+</style>
+</head>
+<body>
+
+<h1>Tier List Maker</h1>
+
+<div class="tier-container" id="tierContainer"></div>
+
+<div class="add-tier-section">
+  <button class="btn btn-secondary" onclick="openAddTierModal('bottom')" style="flex:1;">+ Add Tier</button>
+</div>
+
+<div class="pool-section">
+  <div class="pool-header">
+    <span>ITEMS</span>
+    <button class="btn btn-secondary" style="padding:4px 10px;font-size:0.7rem;" onclick="sortPool('az')">A&rarr;Z</button>
+    <button class="btn btn-secondary" style="padding:4px 10px;font-size:0.7rem;" onclick="sortPool('za')">Z&rarr;A</button>
+    <button class="btn btn-secondary" style="padding:4px 10px;font-size:0.7rem;" onclick="sortPool('shuffle')">Shuffle</button>
+  </div>
+  <div class="pool" id="pool"></div>
+</div>
+
+<div class="upload-area" id="uploadArea">
+  <p>Tap to upload images or drag &amp; drop</p>
+  <input type="file" id="fileInput" accept="image/*" multiple>
+</div>
+
+<div class="bottom-actions">
+  <button class="btn btn-primary" onclick="exportAsImage()">Export as PNG</button>
+  <button class="btn btn-secondary" onclick="resetRankings()">Reset Rankings</button>
+  <button class="btn btn-primary" style="background:#e74c3c;" onclick="resetEverything()">Reset Everything</button>
+</div>
+
+<!-- Modal for adding/editing tier -->
+<div class="modal-overlay hidden" id="modalOverlay">
+  <div class="modal">
+    <h2 id="modalTitle">Add Tier</h2>
+    <label for="tierNameInput">Tier Name</label>
+    <input type="text" id="tierNameInput" maxlength="30" placeholder="e.g. S+, Hall of Shame">
+    <label>Color</label>
+    <div class="color-options" id="colorOptions"></div>
+    <div class="modal-buttons">
+      <button class="btn btn-secondary" onclick="closeModal()">Cancel</button>
+      <button class="btn btn-secondary" id="deleteTierBtn" style="background:#e74c3c;color:#fff;display:none;" onclick="deleteCurrentTier()">Delete</button>
+      <button class="btn btn-primary" id="modalConfirm" onclick="confirmModal()">Add</button>
+    </div>
+  </div>
+</div>
+
+<script>
+const COLORS = [
+  '#e74c3c','#ff6b35','#f39c12','#f1c40f','#2ecc71',
+  '#1abc9c','#3498db','#9b59b6','#e91e63','#795548',
+  '#607d8b','#34495e'
+];
+
+const DEFAULT_TIERS = [
+  { name: 'S', color: '#e74c3c' },
+  { name: 'A', color: '#ff6b35' },
+  { name: 'B', color: '#f39c12' },
+  { name: 'C', color: '#2ecc71' },
+  { name: 'D', color: '#3498db' },
+];
+
+let tiers = [];
+let itemIdCounter = 0;
+let dragItem = null;
+let dragGhost = null;
+let dragOffsetX = 0;
+let dragOffsetY = 0;
+let modalMode = null; // 'add-bottom', 'add-above-INDEX', 'add-below-INDEX', 'edit-INDEX'
+let modalTierIndex = null;
+
+// ---- Init ----
+function init() {
+  tiers = DEFAULT_TIERS.map(t => ({ ...t, items: [] }));
+  render();
+  setupUpload();
+}
+
+// ---- Render ----
+function render() {
+  const container = document.getElementById('tierContainer');
+  container.innerHTML = '';
+  tiers.forEach((tier, i) => {
+    const row = document.createElement('div');
+    row.className = 'tier-row';
+    row.dataset.tierIndex = i;
+
+    const label = document.createElement('div');
+    label.className = 'tier-label';
+    label.style.background = tier.color;
+    label.textContent = tier.name;
+    label.title = 'Tap to edit tier';
+    label.addEventListener('click', () => openEditTierModal(i));
+
+    const items = document.createElement('div');
+    items.className = 'tier-items';
+    items.dataset.tierIndex = i;
+    setupDropZone(items, i);
+
+    tier.items.forEach(item => {
+      items.appendChild(createItemEl(item));
+    });
+
+    const actions = document.createElement('div');
+    actions.className = 'tier-actions';
+
+    const addAbove = document.createElement('button');
+    addAbove.textContent = '+ Above';
+    addAbove.addEventListener('click', () => openAddTierModal('above', i));
+
+    const addBelow = document.createElement('button');
+    addBelow.textContent = '+ Below';
+    addBelow.addEventListener('click', () => openAddTierModal('below', i));
+
+    actions.appendChild(addAbove);
+    actions.appendChild(addBelow);
+
+    row.appendChild(label);
+    row.appendChild(items);
+    row.appendChild(actions);
+    container.appendChild(row);
+  });
+}
+
+function createItemEl(item) {
+  const el = document.createElement('div');
+  el.className = 'item';
+  el.dataset.itemId = item.id;
+
+  const img = document.createElement('img');
+  img.src = item.src;
+  img.alt = '';
+  el.appendChild(img);
+
+  const del = document.createElement('button');
+  del.className = 'delete-item';
+  del.textContent = '\u00d7';
+  del.addEventListener('click', (e) => {
+    e.stopPropagation();
+    removeItem(item.id);
+  });
+  el.appendChild(del);
+
+  // Touch drag
+  el.addEventListener('touchstart', onTouchStart, { passive: false });
+  // Mouse drag
+  el.addEventListener('mousedown', onMouseDown);
+
+  return el;
+}
+
+// ---- Drop zones ----
+function setupDropZone(el, tierIndex) {
+  // Pointer-based drop detection is handled in the drag move handlers
+  el.addEventListener('dragover', e => e.preventDefault());
+}
+
+// ---- Touch drag ----
+function onTouchStart(e) {
+  if (e.touches.length !== 1) return;
+  const touch = e.touches[0];
+  const el = e.currentTarget;
+  e.preventDefault();
+  startDrag(el, touch.clientX, touch.clientY);
+
+  const onMove = (e2) => {
+    e2.preventDefault();
+    const t = e2.touches[0];
+    moveDrag(t.clientX, t.clientY);
+  };
+  const onEnd = (e2) => {
+    const t = e2.changedTouches[0];
+    endDrag(t.clientX, t.clientY);
+    document.removeEventListener('touchmove', onMove);
+    document.removeEventListener('touchend', onEnd);
+  };
+  document.addEventListener('touchmove', onMove, { passive: false });
+  document.addEventListener('touchend', onEnd);
+}
+
+// ---- Mouse drag ----
+function onMouseDown(e) {
+  if (e.button !== 0) return;
+  const el = e.currentTarget;
+  e.preventDefault();
+  startDrag(el, e.clientX, e.clientY);
+
+  const onMove = (e2) => {
+    e2.preventDefault();
+    moveDrag(e2.clientX, e2.clientY);
+  };
+  const onUp = (e2) => {
+    endDrag(e2.clientX, e2.clientY);
+    document.removeEventListener('mousemove', onMove);
+    document.removeEventListener('mouseup', onUp);
+  };
+  document.addEventListener('mousemove', onMove);
+  document.addEventListener('mouseup', onUp);
+}
+
+function startDrag(el, x, y) {
+  const rect = el.getBoundingClientRect();
+  dragOffsetX = x - rect.left;
+  dragOffsetY = y - rect.top;
+  dragItem = el.dataset.itemId;
+
+  // Create ghost
+  dragGhost = document.createElement('div');
+  dragGhost.className = 'drag-ghost';
+  const img = el.querySelector('img');
+  if (img) {
+    const ghostImg = document.createElement('img');
+    ghostImg.src = img.src;
+    dragGhost.appendChild(ghostImg);
+  }
+  dragGhost.style.left = (x - dragOffsetX) + 'px';
+  dragGhost.style.top = (y - dragOffsetY) + 'px';
+  document.body.appendChild(dragGhost);
+
+  el.style.opacity = '0.3';
+}
+
+function moveDrag(x, y) {
+  if (!dragGhost) return;
+  dragGhost.style.left = (x - dragOffsetX) + 'px';
+  dragGhost.style.top = (y - dragOffsetY) + 'px';
+
+  // Highlight drop target
+  clearHighlights();
+  const target = getDropTarget(x, y);
+  if (target) target.classList.add('drag-over');
+}
+
+function endDrag(x, y) {
+  if (!dragItem) return;
+
+  // Find drop target
+  const target = getDropTarget(x, y);
+  if (target) {
+    const itemId = dragItem;
+    if (target.classList.contains('pool')) {
+      moveItemToTier(itemId, 'pool');
+    } else {
+      moveItemToTier(itemId, parseInt(target.dataset.tierIndex));
+    }
+  }
+
+  // Cleanup
+  clearHighlights();
+  if (dragGhost) { dragGhost.remove(); dragGhost = null; }
+  const oldEl = document.querySelector(`.item[data-item-id="${dragItem}"]`);
+  if (oldEl) oldEl.style.opacity = '';
+  dragItem = null;
+
+  render();
+  renderPool();
+}
+
+function getDropTarget(x, y) {
+  // Hide ghost temporarily to get element under pointer
+  if (dragGhost) dragGhost.style.display = 'none';
+  const el = document.elementFromPoint(x, y);
+  if (dragGhost) dragGhost.style.display = '';
+
+  if (!el) return null;
+  // Check if it's a tier-items zone
+  const tierItems = el.closest('.tier-items');
+  if (tierItems) return tierItems;
+  // Check if it's the pool
+  const pool = el.closest('.pool');
+  if (pool) return pool;
+  // Check if it's inside a tier-row (but not on actions)
+  const tierRow = el.closest('.tier-row');
+  if (tierRow) {
+    return tierRow.querySelector('.tier-items');
+  }
+  return null;
+}
+
+function clearHighlights() {
+  document.querySelectorAll('.drag-over').forEach(el => el.classList.remove('drag-over'));
+}
+
+// ---- Item management ----
+function findItem(id) {
+  // Check tiers
+  for (let t of tiers) {
+    const idx = t.items.findIndex(it => it.id == id);
+    if (idx !== -1) return { location: 'tier', tier: t, index: idx, item: t.items[idx] };
+  }
+  // Check pool
+  const poolItems = getPoolItems();
+  const idx = poolItems.findIndex(it => it.id == id);
+  if (idx !== -1) return { location: 'pool', index: idx, item: poolItems[idx] };
+  return null;
+}
+
+function getPoolItems() {
+  if (!window._poolItems) window._poolItems = [];
+  return window._poolItems;
+}
+
+function moveItemToTier(itemId, target) {
+  const found = findItem(itemId);
+  if (!found) return;
+
+  // Remove from current location
+  if (found.location === 'tier') {
+    found.tier.items.splice(found.index, 1);
+  } else {
+    getPoolItems().splice(found.index, 1);
+  }
+
+  // Add to target
+  if (target === 'pool') {
+    getPoolItems().push(found.item);
+  } else {
+    tiers[target].items.push(found.item);
+  }
+}
+
+function addItemToPool(src, name) {
+  const item = { id: ++itemIdCounter, src, name: name || ('item_' + itemIdCounter) };
+  getPoolItems().push(item);
+  renderPool();
+}
+
+function removeItem(id) {
+  const found = findItem(id);
+  if (!found) return;
+  if (found.location === 'tier') {
+    found.tier.items.splice(found.index, 1);
+    render();
+  } else {
+    getPoolItems().splice(found.index, 1);
+    renderPool();
+  }
+}
+
+function renderPool() {
+  const pool = document.getElementById('pool');
+  pool.innerHTML = '';
+
+  getPoolItems().forEach(item => {
+    pool.appendChild(createItemEl(item));
+  });
+}
+
+// ---- Sort / Shuffle pool ----
+function sortPool(mode) {
+  const items = getPoolItems();
+  if (mode === 'az') {
+    items.sort((a, b) => a.name.localeCompare(b.name));
+  } else if (mode === 'za') {
+    items.sort((a, b) => b.name.localeCompare(a.name));
+  } else if (mode === 'shuffle') {
+    for (let i = items.length - 1; i > 0; i--) {
+      const j = Math.floor(Math.random() * (i + 1));
+      [items[i], items[j]] = [items[j], items[i]];
+    }
+  }
+  renderPool();
+}
+
+// ---- Upload ----
+function setupUpload() {
+  const area = document.getElementById('uploadArea');
+  const input = document.getElementById('fileInput');
+
+  area.addEventListener('click', () => input.click());
+
+  area.addEventListener('dragover', (e) => {
+    e.preventDefault();
+    area.classList.add('drag-active');
+  });
+  area.addEventListener('dragleave', () => area.classList.remove('drag-active'));
+  area.addEventListener('drop', (e) => {
+    e.preventDefault();
+    area.classList.remove('drag-active');
+    handleFiles(e.dataTransfer.files);
+  });
+
+  input.addEventListener('change', () => {
+    handleFiles(input.files);
+    input.value = '';
+  });
+}
+
+function handleFiles(files) {
+  for (const file of files) {
+    if (!file.type.startsWith('image/')) continue;
+    const reader = new FileReader();
+    const fname = file.name.replace(/\.[^.]+$/, '').toLowerCase();
+    reader.onload = (e) => addItemToPool(e.target.result, fname);
+    reader.readAsDataURL(file);
+  }
+}
+
+// ---- Tier add/edit modal ----
+function openAddTierModal(position, index) {
+  if (position === 'bottom') {
+    modalMode = 'add-bottom';
+    modalTierIndex = null;
+  } else if (position === 'above') {
+    modalMode = 'add-above';
+    modalTierIndex = index;
+  } else {
+    modalMode = 'add-below';
+    modalTierIndex = index;
+  }
+  document.getElementById('modalTitle').textContent = 'Add Tier';
+  document.getElementById('tierNameInput').value = '';
+  document.getElementById('modalConfirm').textContent = 'Add';
+  document.getElementById('deleteTierBtn').style.display = 'none';
+  renderColorOptions(COLORS[0]);
+  document.getElementById('modalOverlay').classList.remove('hidden');
+  document.getElementById('tierNameInput').focus();
+}
+
+function openEditTierModal(index) {
+  modalMode = 'edit';
+  modalTierIndex = index;
+  const tier = tiers[index];
+  document.getElementById('modalTitle').textContent = 'Edit Tier';
+  document.getElementById('tierNameInput').value = tier.name;
+  document.getElementById('modalConfirm').textContent = 'Save';
+  document.getElementById('deleteTierBtn').style.display = '';
+  renderColorOptions(tier.color);
+  document.getElementById('modalOverlay').classList.remove('hidden');
+  document.getElementById('tierNameInput').focus();
+}
+
+function renderColorOptions(selected) {
+  const container = document.getElementById('colorOptions');
+  container.innerHTML = '';
+  COLORS.forEach(c => {
+    const swatch = document.createElement('div');
+    swatch.className = 'color-swatch' + (c === selected ? ' selected' : '');
+    swatch.style.background = c;
+    swatch.addEventListener('click', () => {
+      container.querySelectorAll('.color-swatch').forEach(s => s.classList.remove('selected'));
+      swatch.classList.add('selected');
+    });
+    container.appendChild(swatch);
+  });
+}
+
+function getSelectedColor() {
+  const sel = document.querySelector('#colorOptions .color-swatch.selected');
+  return sel ? sel.style.background : COLORS[0];
+}
+
+function closeModal() {
+  document.getElementById('modalOverlay').classList.add('hidden');
+  modalMode = null;
+  modalTierIndex = null;
+}
+
+function confirmModal() {
+  const name = document.getElementById('tierNameInput').value.trim() || '?';
+  const color = rgbToHex(getSelectedColor());
+
+  if (modalMode === 'add-bottom') {
+    tiers.push({ name, color, items: [] });
+  } else if (modalMode === 'add-above') {
+    tiers.splice(modalTierIndex, 0, { name, color, items: [] });
+  } else if (modalMode === 'add-below') {
+    tiers.splice(modalTierIndex + 1, 0, { name, color, items: [] });
+  } else if (modalMode === 'edit') {
+    tiers[modalTierIndex].name = name;
+    tiers[modalTierIndex].color = color;
+  }
+
+  closeModal();
+  render();
+}
+
+function deleteCurrentTier() {
+  if (modalTierIndex === null) return;
+  // Move items back to pool
+  const tier = tiers[modalTierIndex];
+  tier.items.forEach(item => getPoolItems().push(item));
+  tiers.splice(modalTierIndex, 1);
+  closeModal();
+  render();
+  renderPool();
+}
+
+// ---- Export ----
+function exportAsImage() {
+  const container = document.getElementById('tierContainer');
+  // Temporarily hide the tier action buttons for a clean export
+  const actionEls = container.querySelectorAll('.tier-actions');
+  actionEls.forEach(el => el.style.display = 'none');
+
+  html2canvas(container, {
+    backgroundColor: '#1a1a2e',
+    scale: 2,
+    useCORS: true,
+    logging: false,
+  }).then(canvas => {
+    actionEls.forEach(el => el.style.display = '');
+    canvas.toBlob(blob => {
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = 'tierlist.png';
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+      setTimeout(() => URL.revokeObjectURL(url), 1000);
+    }, 'image/png');
+  }).catch(() => {
+    actionEls.forEach(el => el.style.display = '');
+    alert('Export failed. Make sure you have an internet connection for the first use (html2canvas library).');
+  });
+}
+
+// ---- Reset ----
+function resetRankings() {
+  tiers.forEach(t => {
+    t.items.forEach(item => getPoolItems().push(item));
+    t.items = [];
+  });
+  render();
+  renderPool();
+}
+
+function resetEverything() {
+  window._poolItems = [];
+  tiers = DEFAULT_TIERS.map(t => ({ ...t, items: [] }));
+  itemIdCounter = 0;
+  render();
+  renderPool();
+}
+
+// ---- Util ----
+function rgbToHex(str) {
+  if (str.startsWith('#')) return str;
+  const m = str.match(/(\d+)/g);
+  if (!m || m.length < 3) return str;
+  return '#' + m.slice(0,3).map(n => parseInt(n).toString(16).padStart(2,'0')).join('');
+}
+
+// Close modal on overlay click
+document.getElementById('modalOverlay').addEventListener('click', (e) => {
+  if (e.target === e.currentTarget) closeModal();
+});
+
+// Keyboard support for modal
+document.addEventListener('keydown', (e) => {
+  if (e.key === 'Escape') closeModal();
+  if (e.key === 'Enter' && !document.getElementById('modalOverlay').classList.contains('hidden')) {
+    confirmModal();
+  }
+});
+
+init();
+</script>
+</body>
+</html>
