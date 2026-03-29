@@ -275,6 +275,25 @@
   .modal .color-swatch.selected { border-color: #fff; }
   .modal .modal-buttons { display: flex; gap: 8px; justify-content: flex-end; }
 
+  /* Lightbox */
+  .lightbox-overlay {
+    position: fixed;
+    inset: 0;
+    background: rgba(0,0,0,0.92);
+    z-index: 9998;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    cursor: zoom-out;
+  }
+  .lightbox-overlay.hidden { display: none; }
+  .lightbox-overlay img {
+    max-width: 100vw;
+    max-height: 100vh;
+    object-fit: contain;
+    pointer-events: none;
+  }
+
   /* Responsive */
   @media (max-width: 500px) {
     :root { --tile-size: 56px; }
@@ -312,6 +331,11 @@
   <button class="btn btn-primary" onclick="exportAsImage()">Export as PNG</button>
   <button class="btn btn-secondary" onclick="resetRankings()">Reset Rankings</button>
   <button class="btn btn-primary" style="background:#e74c3c;" onclick="resetEverything()">Reset Everything</button>
+</div>
+
+<!-- Lightbox -->
+<div class="lightbox-overlay hidden" id="lightboxOverlay">
+  <img id="lightboxImg" src="" alt="">
 </div>
 
 <!-- Modal for adding/editing tier -->
@@ -446,18 +470,34 @@ function onTouchStart(e) {
   const touch = e.touches[0];
   const el = e.currentTarget;
   e.preventDefault();
-  startDrag(el, touch.clientX, touch.clientY);
+
+  const startX = touch.clientX;
+  const startY = touch.clientY;
+  let dragging = false;
 
   const onMove = (e2) => {
     e2.preventDefault();
     const t = e2.touches[0];
-    moveDrag(t.clientX, t.clientY);
+    if (!dragging) {
+      const dx = t.clientX - startX;
+      const dy = t.clientY - startY;
+      if (Math.sqrt(dx * dx + dy * dy) > 8) {
+        dragging = true;
+        startDrag(el, t.clientX, t.clientY);
+      }
+    }
+    if (dragging) moveDrag(t.clientX, t.clientY);
   };
   const onEnd = (e2) => {
-    const t = e2.changedTouches[0];
-    endDrag(t.clientX, t.clientY);
     document.removeEventListener('touchmove', onMove);
     document.removeEventListener('touchend', onEnd);
+    if (dragging) {
+      const t = e2.changedTouches[0];
+      endDrag(t.clientX, t.clientY);
+    } else {
+      const img = el.querySelector('img');
+      if (img) openLightbox(img.src);
+    }
   };
   document.addEventListener('touchmove', onMove, { passive: false });
   document.addEventListener('touchend', onEnd);
@@ -468,16 +508,32 @@ function onMouseDown(e) {
   if (e.button !== 0) return;
   const el = e.currentTarget;
   e.preventDefault();
-  startDrag(el, e.clientX, e.clientY);
+
+  const startX = e.clientX;
+  const startY = e.clientY;
+  let dragging = false;
 
   const onMove = (e2) => {
     e2.preventDefault();
-    moveDrag(e2.clientX, e2.clientY);
+    if (!dragging) {
+      const dx = e2.clientX - startX;
+      const dy = e2.clientY - startY;
+      if (Math.sqrt(dx * dx + dy * dy) > 5) {
+        dragging = true;
+        startDrag(el, e2.clientX, e2.clientY);
+      }
+    }
+    if (dragging) moveDrag(e2.clientX, e2.clientY);
   };
   const onUp = (e2) => {
-    endDrag(e2.clientX, e2.clientY);
     document.removeEventListener('mousemove', onMove);
     document.removeEventListener('mouseup', onUp);
+    if (dragging) {
+      endDrag(e2.clientX, e2.clientY);
+    } else {
+      const img = el.querySelector('img');
+      if (img) openLightbox(img.src);
+    }
   };
   document.addEventListener('mousemove', onMove);
   document.addEventListener('mouseup', onUp);
@@ -819,6 +875,19 @@ function resetEverything() {
   renderPool();
 }
 
+// ---- Lightbox ----
+function openLightbox(src) {
+  document.getElementById('lightboxImg').src = src;
+  document.getElementById('lightboxOverlay').classList.remove('hidden');
+}
+
+function closeLightbox() {
+  document.getElementById('lightboxOverlay').classList.add('hidden');
+  document.getElementById('lightboxImg').src = '';
+}
+
+document.getElementById('lightboxOverlay').addEventListener('click', closeLightbox);
+
 // ---- Util ----
 function rgbToHex(str) {
   if (str.startsWith('#')) return str;
@@ -834,7 +903,10 @@ document.getElementById('modalOverlay').addEventListener('click', (e) => {
 
 // Keyboard support for modal
 document.addEventListener('keydown', (e) => {
-  if (e.key === 'Escape') closeModal();
+  if (e.key === 'Escape') {
+    closeModal();
+    closeLightbox();
+  }
   if (e.key === 'Enter' && !document.getElementById('modalOverlay').classList.contains('hidden')) {
     confirmModal();
   }
