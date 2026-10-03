@@ -140,6 +140,29 @@
   }
   .item:hover .delete-item, .item:focus .delete-item { display: block; }
 
+  /* Touch screens have no hover, so always show the delete button */
+  @media (hover: none) {
+    .item .delete-item {
+      display: block;
+      width: 22px;
+      height: 22px;
+      line-height: 22px;
+      font-size: 13px;
+    }
+  }
+
+  /* Insertion marker shown while dragging */
+  .drop-marker {
+    position: fixed;
+    width: 3px;
+    background: var(--accent);
+    border-radius: 2px;
+    box-shadow: 0 0 6px var(--accent);
+    pointer-events: none;
+    z-index: 9998;
+  }
+  .drop-marker.hidden { display: none; }
+
   /* Ghost for dragging */
   .drag-ghost {
     position: fixed;
@@ -393,11 +416,82 @@ let modalMode = null; // 'add-bottom', 'add-above-INDEX', 'add-below-INDEX', 'ed
 let modalTierIndex = null;
 
 // ---- Init ----
-function init() {
-  tiers = DEFAULT_TIERS.map(t => ({ ...t, items: [] }));
-  render();
+async function init() {
   setupUpload();
+  let saved = null;
+  try {
+    saved = await loadState();
+  } catch (err) {
+    console.warn('Could not load saved tier list:', err);
+  }
+  if (saved && Array.isArray(saved.tiers)) {
+    tiers = saved.tiers;
+    window._poolItems = saved.pool || [];
+    itemIdCounter = saved.itemIdCounter || 0;
+  } else {
+    tiers = DEFAULT_TIERS.map(t => ({ ...t, items: [] }));
+  }
+  stateLoaded = true;
+  render();
+  renderPool();
 }
+
+// ---- Persistence (IndexedDB) ----
+const DB_NAME = 'tierlist';
+const DB_STORE = 'state';
+let dbPromise = null;
+let saveTimer = null;
+let stateLoaded = false;
+
+function getDB() {
+  if (!dbPromise) {
+    dbPromise = new Promise((resolve, reject) => {
+      const req = indexedDB.open(DB_NAME, 1);
+      req.onupgradeneeded = () => req.result.createObjectStore(DB_STORE);
+      req.onsuccess = () => resolve(req.result);
+      req.onerror = () => reject(req.error);
+    });
+  }
+  return dbPromise;
+}
+
+async function loadState() {
+  const db = await getDB();
+  return new Promise((resolve, reject) => {
+    const req = db.transaction(DB_STORE).objectStore(DB_STORE).get('current');
+    req.onsuccess = () => resolve(req.result);
+    req.onerror = () => reject(req.error);
+  });
+}
+
+async function saveState() {
+  const db = await getDB();
+  const data = { tiers, pool: getPoolItems(), itemIdCounter };
+  return new Promise((resolve, reject) => {
+    const tx = db.transaction(DB_STORE, 'readwrite');
+    tx.objectStore(DB_STORE).put(data, 'current');
+    tx.oncomplete = () => resolve();
+    tx.onerror = () => reject(tx.error);
+  });
+}
+
+function scheduleSave() {
+  // Don't overwrite saved data with defaults before it has loaded
+  if (!stateLoaded) return;
+  clearTimeout(saveTimer);
+  saveTimer = setTimeout(() => {
+    saveTimer = null;
+    saveState().catch(err => console.warn('Could not save tier list:', err));
+  }, 300);
+}
+
+window.addEventListener('pagehide', () => {
+  if (saveTimer) {
+    clearTimeout(saveTimer);
+    saveTimer = null;
+    saveState().catch(() => {});
+  }
+});
 
 // ---- Render ----
 function render() {
@@ -443,6 +537,7 @@ function render() {
     row.appendChild(actions);
     container.appendChild(row);
   });
+  scheduleSave();
 }
 
 function createItemEl(item) {
@@ -481,6 +576,8 @@ function setupDropZone(el, tierIndex) {
 // ---- Touch drag ----
 function onTouchStart(e) {
   if (e.touches.length !== 1) return;
+  // Let taps on the delete button through as normal clicks
+  if (e.target.closest('.delete-item')) return;
   const touch = e.touches[0];
   const el = e.currentTarget;
   e.preventDefault();
@@ -520,6 +617,7 @@ function onTouchStart(e) {
 // ---- Mouse drag ----
 function onMouseDown(e) {
   if (e.button !== 0) return;
+  if (e.target.closest('.delete-item')) return;
   const el = e.currentTarget;
   e.preventDefault();
 
@@ -583,7 +681,12 @@ function moveDrag(x, y) {
   // Highlight drop target
   clearHighlights();
   const target = getDropTarget(x, y);
-  if (target) target.classList.add('drag-over');
+  if (target) {
+    target.classList.add('drag-over');
+    showDropMarker(target, x, y);
+  } else {
+    hideDropMarker();
+  }
 }
 
 function endDrag(x, y) {
@@ -593,15 +696,17 @@ function endDrag(x, y) {
   const target = getDropTarget(x, y);
   if (target) {
     const itemId = dragItem;
+    const { index } = getInsertPosition(target, x, y);
     if (target.classList.contains('pool')) {
-      moveItemToTier(itemId, 'pool');
+      moveItemToTier(itemId, 'pool', index);
     } else {
-      moveItemToTier(itemId, parseInt(target.dataset.tierIndex));
+      moveItemToTier(itemId, parseInt(target.dataset.tierIndex), index);
     }
   }
 
   // Cleanup
   clearHighlights();
+  hideDropMarker();
   if (dragGhost) { dragGhost.remove(); dragGhost = null; }
   const oldEl = document.querySelector(`.item[data-item-id="${dragItem}"]`);
   if (oldEl) oldEl.style.opacity = '';
@@ -632,6 +737,49 @@ function getDropTarget(x, y) {
   return null;
 }
 
+// Where in `container` the dragged item would land: the index among the other
+// items, and the item it would be inserted before (null = at the end).
+function getInsertPosition(container, x, y) {
+  const items = [...container.querySelectorAll('.item')]
+    .filter(el => el.dataset.itemId !== String(dragItem));
+  for (let i = 0; i < items.length; i++) {
+    const r = items[i].getBoundingClientRect();
+    if (y < r.top) return { index: i, ref: items[i], items };
+    if (y <= r.bottom && x < r.left + r.width / 2) return { index: i, ref: items[i], items };
+  }
+  return { index: items.length, ref: null, items };
+}
+
+let dropMarker = null;
+
+function showDropMarker(container, x, y) {
+  if (!dropMarker) {
+    dropMarker = document.createElement('div');
+    dropMarker.className = 'drop-marker';
+    document.body.appendChild(dropMarker);
+  }
+  const { ref, items } = getInsertPosition(container, x, y);
+  let left, top, height;
+  if (ref) {
+    const r = ref.getBoundingClientRect();
+    left = r.left - 3.5; top = r.top; height = r.height;
+  } else if (items.length) {
+    const r = items[items.length - 1].getBoundingClientRect();
+    left = r.right + 0.5; top = r.top; height = r.height;
+  } else {
+    const r = container.getBoundingClientRect();
+    left = r.left + 4; top = r.top + 4; height = r.height - 8;
+  }
+  dropMarker.style.left = left + 'px';
+  dropMarker.style.top = top + 'px';
+  dropMarker.style.height = height + 'px';
+  dropMarker.classList.remove('hidden');
+}
+
+function hideDropMarker() {
+  if (dropMarker) dropMarker.classList.add('hidden');
+}
+
 function clearHighlights() {
   document.querySelectorAll('.drag-over').forEach(el => el.classList.remove('drag-over'));
 }
@@ -655,7 +803,7 @@ function getPoolItems() {
   return window._poolItems;
 }
 
-function moveItemToTier(itemId, target) {
+function moveItemToTier(itemId, target, index) {
   const found = findItem(itemId);
   if (!found) return;
 
@@ -666,11 +814,12 @@ function moveItemToTier(itemId, target) {
     getPoolItems().splice(found.index, 1);
   }
 
-  // Add to target
-  if (target === 'pool') {
-    getPoolItems().push(found.item);
+  // Add to target, at `index` if given (otherwise at the end)
+  const list = target === 'pool' ? getPoolItems() : tiers[target].items;
+  if (index == null || index > list.length) {
+    list.push(found.item);
   } else {
-    tiers[target].items.push(found.item);
+    list.splice(index, 0, found.item);
   }
 }
 
@@ -699,6 +848,7 @@ function renderPool() {
   getPoolItems().forEach(item => {
     pool.appendChild(createItemEl(item));
   });
+  scheduleSave();
 }
 
 // ---- Sort / Shuffle pool ----
@@ -741,14 +891,49 @@ function setupUpload() {
   });
 }
 
-function handleFiles(files) {
-  for (const file of files) {
-    if (!file.type.startsWith('image/')) continue;
+async function handleFiles(files) {
+  const images = [...files].filter(f => f.type.startsWith('image/'));
+  // Process in parallel but add in the original order
+  const results = await Promise.all(images.map(async file => ({
+    src: await downscaleImage(await readAsDataURL(file), file.type),
+    name: file.name.replace(/\.[^.]+$/, '').toLowerCase(),
+  })));
+  results.forEach(r => addItemToPool(r.src, r.name));
+}
+
+function readAsDataURL(file) {
+  return new Promise((resolve, reject) => {
     const reader = new FileReader();
-    const fname = file.name.replace(/\.[^.]+$/, '').toLowerCase();
-    reader.onload = (e) => addItemToPool(e.target.result, fname);
+    reader.onload = () => resolve(reader.result);
+    reader.onerror = () => reject(reader.error);
     reader.readAsDataURL(file);
-  }
+  });
+}
+
+// Shrink large images so they stay fast to drag and cheap to save.
+// 800px keeps the lightbox reasonably sharp.
+const MAX_IMAGE_SIZE = 800;
+
+function downscaleImage(dataUrl, type) {
+  return new Promise(resolve => {
+    // Canvas would flatten animated GIFs; SVGs are already small
+    if (type === 'image/gif' || type === 'image/svg+xml') return resolve(dataUrl);
+    const img = new Image();
+    img.onload = () => {
+      const scale = Math.min(1, MAX_IMAGE_SIZE / Math.max(img.naturalWidth, img.naturalHeight));
+      if (scale === 1) return resolve(dataUrl);
+      const canvas = document.createElement('canvas');
+      canvas.width = Math.round(img.naturalWidth * scale);
+      canvas.height = Math.round(img.naturalHeight * scale);
+      canvas.getContext('2d').drawImage(img, 0, 0, canvas.width, canvas.height);
+      // WebP keeps transparency; browsers that can't encode it fall back to PNG
+      resolve(type === 'image/jpeg'
+        ? canvas.toDataURL('image/jpeg', 0.9)
+        : canvas.toDataURL('image/webp', 0.9));
+    };
+    img.onerror = () => resolve(dataUrl);
+    img.src = dataUrl;
+  });
 }
 
 // ---- Tier add/edit modal ----
@@ -853,6 +1038,8 @@ function exportAsImage() {
     scale: 2,
     useCORS: true,
     logging: false,
+    // Delete buttons are always visible on touch screens
+    ignoreElements: el => el.classList.contains('delete-item'),
   }).then(canvas => {
     actionEls.forEach(el => el.style.display = '');
     canvas.toBlob(blob => {
@@ -882,6 +1069,7 @@ function resetRankings() {
 }
 
 function resetEverything() {
+  if (!confirm('Remove all items and reset tiers? This can’t be undone.')) return;
   window._poolItems = [];
   tiers = DEFAULT_TIERS.map(t => ({ ...t, items: [] }));
   itemIdCounter = 0;
